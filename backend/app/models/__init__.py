@@ -1,5 +1,6 @@
 from app.models.entities import (
     Project,
+    ProjectMember,
     User,
     Skill,
     UserSkill,
@@ -7,10 +8,12 @@ from app.models.entities import (
     TaskDependency,
     WorkEvent,
     SystemSettings,
+    Integration,
 )
 
 __all__ = [
     "Project",
+    "ProjectMember",
     "User",
     "Skill",
     "UserSkill",
@@ -18,4 +21,5 @@ __all__ = [
     "TaskDependency",
     "WorkEvent",
     "SystemSettings",
+    "Integration",
 ]

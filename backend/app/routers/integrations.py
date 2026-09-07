@@ -1,18 +1,21 @@
+import os
 from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy.orm import Session
 from typing import List, Dict
 
-from app.models.entities import User
+from app.database import get_db
+from app.models.entities import User, Integration
+from app.schemas.dtos import IntegrationResponse
 from app.security import get_current_user, get_current_leader
 
 router = APIRouter(prefix="/api/integrations", tags=["integrations"])
 
-# In-memory integration state
-INTEGRATIONS_STATE = [
+DEFAULT_INTEGRATIONS = [
     {
         "id": "github",
         "name": "GitHub",
         "category": "Code Review & PRs",
-        "status": "Connected",
+        "status": "Connected" if os.getenv("GITHUB_WEBHOOK_SECRET") else "Not Connected",
         "description": "Syncs pull request reviews, comments, and commit context to track review load.",
         "icon": "Github"
     },
@@ -20,7 +23,7 @@ INTEGRATIONS_STATE = [
         "id": "jira",
         "name": "Jira Software",
         "category": "Issue Tracking",
-        "status": "Connected",
+        "status": "Not Connected",
         "description": "Syncs task assignments, estimates, remaining hours, and issue statuses.",
         "icon": "Layers"
     },
@@ -28,7 +31,7 @@ INTEGRATIONS_STATE = [
         "id": "slack",
         "name": "Slack",
         "category": "Communication",
-        "status": "Connected",
+        "status": "Not Connected",
         "description": "Aggregates support channel context switching and interruption telemetry without storing messages.",
         "icon": "MessageSquare"
     },
@@ -36,7 +39,7 @@ INTEGRATIONS_STATE = [
         "id": "google_calendar",
         "name": "Google Calendar",
         "category": "Calendar & Meetings",
-        "status": "Connected",
+        "status": "Not Connected",
         "description": "Calculates daily meeting load to derive usable task-work capacity.",
         "icon": "Calendar"
     },
@@ -66,20 +69,57 @@ INTEGRATIONS_STATE = [
     }
 ]
 
-@router.get("", response_model=List[Dict])
-def list_integrations(current_user: User = Depends(get_current_user)):
-    return INTEGRATIONS_STATE
+def ensure_integrations_seeded(db: Session):
+    """Seed the default integrations into the database if not present."""
+    count = db.query(Integration).count()
+    if count == 0:
+        for item in DEFAULT_INTEGRATIONS:
+            integ = Integration(
+                id=item["id"],
+                name=item["name"],
+                category=item["category"],
+                status=item["status"],
+                description=item["description"],
+                icon=item["icon"],
+            )
+            db.add(integ)
+        db.commit()
+    else:
+        # Check if GitHub secret is now configured in env and update GitHub status if needed
+        if os.getenv("GITHUB_WEBHOOK_SECRET"):
+            gh = db.query(Integration).filter(Integration.id == "github").first()
+            if gh and gh.status == "Not Connected":
+                gh.status = "Connected"
+                db.commit()
 
-@router.post("/{integration_id}/toggle")
+@router.get("", response_model=List[IntegrationResponse])
+def list_integrations(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    ensure_integrations_seeded(db)
+    integrations = db.query(Integration).all()
+    return integrations
+
+@router.post("/{integration_id}/toggle", response_model=IntegrationResponse)
 def toggle_integration(
     integration_id: str,
-    current_user: User = Depends(get_current_leader)
+    current_user: User = Depends(get_current_leader),
+    db: Session = Depends(get_db)
 ):
-    for item in INTEGRATIONS_STATE:
-        if item["id"] == integration_id:
-            if item["status"] == "Connected":
-                item["status"] = "Not Connected"
-            elif item["status"] == "Not Connected":
-                item["status"] = "Connected"
-            return {"id": item["id"], "name": item["name"], "status": item["status"]}
-    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Integration not found")
+    ensure_integrations_seeded(db)
+    integ = db.query(Integration).filter(Integration.id == integration_id).first()
+    if not integ:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Integration not found")
+
+    if integ.status == "Coming Soon":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"{integ.name} integration is coming soon and cannot be enabled yet."
+        )
+
+    integ.status = "Not Connected" if integ.status == "Connected" else "Connected"
+    db.commit()
+    db.refresh(integ)
+    return integ
+

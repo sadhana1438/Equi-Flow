@@ -18,6 +18,7 @@ from app.routers import (
     integrations,
     notifications,
     settings,
+    webhooks,
 )
 
 @asynccontextmanager
@@ -61,6 +62,7 @@ app.include_router(analytics.router)
 app.include_router(integrations.router)
 app.include_router(notifications.router)
 app.include_router(settings.router)
+app.include_router(webhooks.router)
 
 @app.get("/")
 def root():
