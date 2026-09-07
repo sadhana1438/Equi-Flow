@@ -1,11 +1,12 @@
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
-from typing import List, Dict
+from typing import List, Dict, Optional
 from datetime import datetime, timezone
 import uuid
 
 from app.database import get_db
-from app.models.entities import User, Task, TaskDependency, WorkEvent, SystemSettings
+from app.models.entities import User, Task, TaskDependency, WorkEvent, SystemSettings, ProjectMember, Project
+from app.security import get_current_user
 from app.intelligence.workload import compute_member_workload
 from app.intelligence.bottleneck import detect_bottlenecks
 from app.intelligence.risk import calculate_project_risks_and_health
@@ -13,11 +14,25 @@ from app.intelligence.risk import calculate_project_risks_and_health
 router = APIRouter(prefix="/api/notifications", tags=["notifications"])
 
 @router.get("", response_model=List[Dict])
-def get_dynamic_notifications(db: Session = Depends(get_db)):
-    users = db.query(User).all()
-    tasks = db.query(Task).all()
-    dependencies = db.query(TaskDependency).all()
-    events = db.query(WorkEvent).all()
+def get_dynamic_notifications(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    if current_user.is_leader:
+        tasks = db.query(Task).all()
+        dependencies = db.query(TaskDependency).all()
+        events = db.query(WorkEvent).all()
+        users = db.query(User).all()
+    else:
+        user_projects = db.query(ProjectMember.project_id).filter(ProjectMember.user_id == current_user.id).subquery()
+        tasks = db.query(Task).filter(Task.project_id.in_(user_projects)).all()
+        task_ids = {t.id for t in tasks}
+        dependencies = db.query(TaskDependency).filter(
+            TaskDependency.blocking_task_id.in_(task_ids),
+            TaskDependency.dependent_task_id.in_(task_ids)
+        ).all() if task_ids else []
+        events = db.query(WorkEvent).filter(WorkEvent.project_id.in_(user_projects)).all()
+        users = [current_user]
 
     if not users and not tasks:
         return []
@@ -86,7 +101,7 @@ def get_dynamic_notifications(db: Session = Depends(get_db)):
             "title": f"Elevated Project Delay Risk ({risks['delay_risk']}%)",
             "message": f"Project health dropped to '{risks['health']}' due to critical path delays and unmitigated bottleneck dependencies.",
             "timestamp": now_str,
-            "action_link": "/"
+            "action_link": "/dashboard"
         })
 
     return notifications

@@ -100,9 +100,36 @@ def calculate_hidden_work_and_meetings(events: List[WorkEvent]) -> Dict[str, flo
         "collaboration": round(collaboration, 2),
     }
 
-def calculate_fragmentation(events: List[WorkEvent]) -> Tuple[float, int]:
+def filter_events_by_window(
+    events: List[WorkEvent],
+    window_hours: int = 24,
+    now: Optional[datetime] = None
+) -> List[WorkEvent]:
+    """
+    Constrains work events to a rolling window (default: 24 hours).
+    Events without a timestamp are treated as active (for testing and legacy compatibility).
+    """
+    if not events:
+        return []
+    if now is None:
+        now = datetime.now(timezone.utc)
+    else:
+        now = ensure_utc(now)
+
+    cutoff = now - timedelta(hours=window_hours)
+    return [
+        ev for ev in events
+        if ev.event_timestamp is None or ensure_utc(ev.event_timestamp) >= cutoff
+    ]
+
+def calculate_fragmentation(
+    events: List[WorkEvent],
+    window_hours: Optional[int] = 24,
+    now: Optional[datetime] = None
+) -> Tuple[float, int]:
     """
     Calculate context switching dynamically using a sliding 4-hour window.
+    Only considers events within the active time window (default 24h).
     Track switches between projects, repositories, channels.
     Rules:
     - First 2 switches have no penalty (1.0)
@@ -110,6 +137,9 @@ def calculate_fragmentation(events: List[WorkEvent]) -> Tuple[float, int]:
     - Maximum multiplier = 1.5x
     - If no context switch data exists, use neutral multiplier (1.0)
     """
+    if window_hours is not None:
+        events = filter_events_by_window(events, window_hours=window_hours, now=now)
+
     # Filter events with a context
     events_with_context = [
         ev for ev in events 
@@ -159,14 +189,24 @@ def compute_member_workload(
     events: List[WorkEvent],
     healthy_threshold: float = 0.8,
     near_capacity_threshold: float = 1.0,
-    now: Optional[datetime] = None
+    now: Optional[datetime] = None,
+    window_hours: int = 24
 ) -> Dict:
     """
     Complete workload calculation formula:
     W_total = ((T_assigned + H_tracked) / max(C_capacity - M_meetings, 0.5)) * F_fragmentation
+    Constrains work events to the rolling window (default: 24 hours).
     """
+    if now is None:
+        now = datetime.now(timezone.utc)
+    else:
+        now = ensure_utc(now)
+
+    # Constrain work events to the rolling 24-hour window
+    recent_events = filter_events_by_window(events, window_hours=window_hours, now=now)
+
     t_assigned, active_tasks = calculate_assigned_work(tasks, now=now)
-    hw_data = calculate_hidden_work_and_meetings(events)
+    hw_data = calculate_hidden_work_and_meetings(recent_events)
     h_tracked = hw_data["hidden_work"]
     m_meetings = hw_data["meetings"]
 
@@ -175,7 +215,7 @@ def compute_member_workload(
     available_capacity = max(net_capacity, 0.5)
     no_task_capacity = net_capacity < 0.5
 
-    f_fragmentation, switch_count = calculate_fragmentation(events)
+    f_fragmentation, switch_count = calculate_fragmentation(recent_events, window_hours=None, now=now)
 
     w_total = ((t_assigned + h_tracked) / available_capacity) * f_fragmentation
     w_total = round(w_total, 2)

@@ -103,8 +103,12 @@ export default function DashboardPage() {
           });
         }
       }
-    } catch (err) {
-      console.error('Failed to load dashboard intelligence:', err);
+    } catch (err: any) {
+      if (err?.message?.includes('credentials') || err?.message?.includes('401')) {
+        console.warn('Dashboard notice: user session expired or credentials invalid.');
+      } else {
+        console.error('Failed to load dashboard intelligence:', err);
+      }
     } finally {
       setLoading(false);
     }

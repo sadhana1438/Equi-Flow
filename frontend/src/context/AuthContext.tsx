@@ -33,14 +33,41 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       const saved = localStorage.getItem('equiflow_auth');
       if (saved) {
         const parsed = JSON.parse(saved);
-        if (parsed.user && parsed.token) {
-          setUser(parsed.user);
-          setToken(parsed.token);
+        if (parsed.user && parsed.token && typeof parsed.token === 'string') {
+          const parts = parsed.token.split('.');
+          if (parts.length === 3) {
+            try {
+              const payload = JSON.parse(atob(parts[1]));
+              if (payload.exp && payload.exp * 1000 < Date.now()) {
+                console.warn('Saved JWT token has expired. Session cleared.');
+                localStorage.removeItem('equiflow_auth');
+                return;
+              }
+            } catch (_) {}
+            setUser(parsed.user);
+            setToken(parsed.token);
+            return;
+          }
         }
+        // If malformed or legacy token
+        localStorage.removeItem('equiflow_auth');
       }
     } catch (e) {
-      console.error('Failed restoring auth session:', e);
+      console.warn('Failed restoring auth session:', e);
+      localStorage.removeItem('equiflow_auth');
     }
+  }, []);
+
+  useEffect(() => {
+    const handleUnauthorized = () => {
+      setUser(null);
+      setToken(null);
+      if (typeof window !== 'undefined') {
+        localStorage.removeItem('equiflow_auth');
+      }
+    };
+    window.addEventListener('equiflow_unauthorized', handleUnauthorized);
+    return () => window.removeEventListener('equiflow_unauthorized', handleUnauthorized);
   }, []);
 
   const saveSession = (u: User, t: string) => {

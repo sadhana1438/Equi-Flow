@@ -1,20 +1,28 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from typing import List
 import uuid
 
 from app.database import get_db
-from app.models.entities import Skill
+from app.models.entities import Skill, User
 from app.schemas.dtos import SkillCreate, SkillResponse
+from app.security import get_current_user, get_current_leader
 
 router = APIRouter(prefix="/api/skills", tags=["skills"])
 
 @router.get("", response_model=List[SkillResponse])
-def list_skills(db: Session = Depends(get_db)):
+def list_skills(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
     return db.query(Skill).order_by(Skill.name.asc()).all()
 
 @router.post("", response_model=SkillResponse)
-def create_skill(payload: SkillCreate, db: Session = Depends(get_db)):
+def create_skill(
+    payload: SkillCreate,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
     existing = db.query(Skill).filter(Skill.name.ilike(payload.name.strip())).first()
     if existing:
         return existing
@@ -30,10 +38,14 @@ def create_skill(payload: SkillCreate, db: Session = Depends(get_db)):
     return skill
 
 @router.delete("/{skill_id}")
-def delete_skill(skill_id: str, db: Session = Depends(get_db)):
+def delete_skill(
+    skill_id: str,
+    current_user: User = Depends(get_current_leader),
+    db: Session = Depends(get_db)
+):
     skill = db.query(Skill).filter(Skill.id == skill_id).first()
     if not skill:
-        raise HTTPException(status_code=404, detail="Skill not found")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Skill not found")
     db.delete(skill)
     db.commit()
     return {"message": "Skill deleted"}

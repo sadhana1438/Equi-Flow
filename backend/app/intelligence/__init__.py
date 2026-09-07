@@ -1,4 +1,9 @@
-from app.intelligence.workload import compute_member_workload, calculate_assigned_work, calculate_fragmentation
+from app.intelligence.workload import (
+    compute_member_workload,
+    calculate_assigned_work,
+    calculate_fragmentation,
+    filter_events_by_window,
+)
 from app.intelligence.graph import build_dependency_digraph, get_downstream_impact, get_critical_path_tasks
 from app.intelligence.bottleneck import detect_bottlenecks
 from app.intelligence.risk import calculate_project_risks_and_health
@@ -10,6 +15,7 @@ __all__ = [
     "compute_member_workload",
     "calculate_assigned_work",
     "calculate_fragmentation",
+    "filter_events_by_window",
     "build_dependency_digraph",
     "get_downstream_impact",
     "get_critical_path_tasks",

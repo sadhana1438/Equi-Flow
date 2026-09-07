@@ -44,10 +44,14 @@ export function ProjectProvider({ children }: { children: React.ReactNode }) {
       } else {
         setSelectedProjectId(null);
       }
-    } catch (err) {
-      console.error('Failed to load user-scoped projects:', err);
+    } catch (err: any) {
       setProjects([]);
       setSelectedProjectId(null);
+      if (err?.message?.includes('credentials') || err?.message?.includes('401') || err?.message?.includes('Unauthorized')) {
+        console.warn('Session expired or credentials invalid, project context cleared.');
+      } else {
+        console.warn('Failed to load user-scoped projects:', err?.message || err);
+      }
     } finally {
       setLoading(false);
     }

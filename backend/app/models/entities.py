@@ -167,3 +167,19 @@ class SystemSettings(Base):
     raw_retention_days = Column(Integer, nullable=False, default=90)
     theme = Column(String(20), nullable=False, default="dark")
     updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+
+class Integration(Base):
+    __tablename__ = "integrations"
+
+    id = Column(String(50), primary_key=True)  # "github", "jira", "slack", "google_calendar", etc.
+    name = Column(String(100), nullable=False)
+    category = Column(String(100), nullable=False)
+    status = Column(String(50), nullable=False, default="Not Connected")  # "Connected", "Not Connected", "Coming Soon"
+    description = Column(Text, nullable=True)
+    icon = Column(String(50), nullable=True)
+    webhook_secret = Column(String(255), nullable=True)
+    config_json = Column(Text, nullable=True)
+    last_event_at = Column(DateTime, nullable=True)
+    events_count = Column(Integer, nullable=False, default=0)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))

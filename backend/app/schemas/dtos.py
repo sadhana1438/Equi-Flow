@@ -1,6 +1,6 @@
 from datetime import datetime
 from typing import Optional, List, Dict, Any
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 
 # --- Projects ---
 class ProjectBase(BaseModel):
@@ -334,3 +334,17 @@ class SettingsResponse(BaseModel):
     default_capacity: float
     raw_retention_days: int
     theme: str
+
+# --- Integrations ---
+class IntegrationResponse(BaseModel):
+    id: str
+    name: str
+    category: str
+    status: str
+    description: Optional[str] = None
+    icon: Optional[str] = None
+    last_event_at: Optional[datetime] = None
+    events_count: int = 0
+
+    model_config = ConfigDict(from_attributes=True)
+
