@@ -31,10 +31,12 @@ jobs:
 
       - name: Run Pytest suite
         env:
+          PYTHONPATH: .
           JWT_SECRET: "ci-secret-key-minimum-32-characters-long!!"
           GITHUB_WEBHOOK_SECRET: "ci-test-webhook-secret-xyz"
         run: |
-          pytest -v
+          python -m pytest -v
+
 
   frontend:
     name: Frontend Build (Next.js)
