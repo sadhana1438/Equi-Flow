@@ -25,9 +25,17 @@ function getAuthToken(): string | null {
     const saved = localStorage.getItem('equiflow_auth');
     if (saved) {
       const parsed = JSON.parse(saved);
-      return parsed.token || null;
+      const token = parsed.token;
+      // Valid signed JWTs must consist of 3 base64url parts (header.payload.signature)
+      if (typeof token === 'string' && token.split('.').length === 3) {
+        return token;
+      }
+      // Outdated or legacy token format - immediately clean up
+      localStorage.removeItem('equiflow_auth');
     }
-  } catch (_) {}
+  } catch (_) {
+    localStorage.removeItem('equiflow_auth');
+  }
   return null;
 }
 
@@ -51,6 +59,15 @@ async function fetchJson<T>(endpoint: string, options?: RequestInit): Promise<T>
       const err = await res.json();
       errorDetail = err.detail || err.message || JSON.stringify(err);
     } catch (_) {}
+
+    // On 401 Unauthorized, purge invalid session to prevent persistent credential errors
+    if (res.status === 401) {
+      if (typeof window !== 'undefined') {
+        localStorage.removeItem('equiflow_auth');
+        window.dispatchEvent(new CustomEvent('equiflow_unauthorized'));
+      }
+    }
+
     throw new Error(errorDetail);
   }
 
