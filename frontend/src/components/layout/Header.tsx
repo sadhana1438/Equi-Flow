@@ -21,7 +21,10 @@ import {
   LogOut,
   KeyRound,
   Compass,
+  PanelLeftClose,
+  PanelLeftOpen,
 } from 'lucide-react';
+import { useSidebar } from '@/context/SidebarContext';
 
 interface HeaderProps {
   onOpenMobileMenu: () => void;
@@ -31,6 +34,7 @@ export default function Header({ onOpenMobileMenu }: HeaderProps) {
   const { projects, selectedProjectId, setSelectedProjectId } = useProject();
   const { theme, toggleTheme } = useTheme();
   const { user, logout } = useAuth();
+  const { collapsed, toggleSidebar } = useSidebar();
 
   const [projectDropdownOpen, setProjectDropdownOpen] = useState(false);
   const [logWorkOpen, setLogWorkOpen] = useState(false);
@@ -49,8 +53,9 @@ export default function Header({ onOpenMobileMenu }: HeaderProps) {
   return (
     <>
       <header className="sticky top-0 z-20 h-14 border-b border-zinc-200 dark:border-zinc-800/80 bg-white/90 dark:bg-zinc-950/90 backdrop-blur-md px-4 sm:px-6 flex items-center justify-between transition-colors">
-        {/* Left: Mobile hamburger + Project Selector + Project Join Code */}
-        <div className="flex items-center gap-3">
+        {/* Left: Mobile hamburger + Desktop Sidebar Toggle + Project Selector + Project Join Code */}
+        <div className="flex items-center gap-2 sm:gap-3">
+          {/* Mobile hamburger menu */}
           <button
             onClick={onOpenMobileMenu}
             className="md:hidden p-1.5 rounded-lg text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors"
@@ -59,8 +64,19 @@ export default function Header({ onOpenMobileMenu }: HeaderProps) {
             <Menu className="w-4 h-4" />
           </button>
 
+          {/* Desktop Sidebar Toggle Button */}
+          <button
+            onClick={toggleSidebar}
+            className="hidden md:flex p-1.5 rounded-lg text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100 hover:bg-zinc-100 dark:hover:bg-zinc-800/80 transition-colors"
+            title={collapsed ? 'Expand sidebar (Ctrl+B)' : 'Collapse sidebar (Ctrl+B)'}
+            aria-label="Toggle sidebar collapse"
+          >
+            {collapsed ? <PanelLeftOpen className="w-4 h-4" /> : <PanelLeftClose className="w-4 h-4" />}
+          </button>
+
           {/* Project Selector Dropdown */}
           <div className="relative">
+
             <button
               onClick={() => setProjectDropdownOpen(!projectDropdownOpen)}
               className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900 text-xs font-semibold text-zinc-800 dark:text-zinc-200 hover:border-zinc-300 dark:hover:border-zinc-700 transition-all shadow-xs"
