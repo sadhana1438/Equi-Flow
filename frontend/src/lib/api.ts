@@ -19,14 +19,38 @@ import {
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8000/api';
 
+function getAuthToken(): string | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const saved = localStorage.getItem('equiflow_auth');
+    if (saved) {
+      const parsed = JSON.parse(saved);
+      const token = parsed.token;
+      // Valid signed JWTs must consist of 3 base64url parts (header.payload.signature)
+      if (typeof token === 'string' && token.split('.').length === 3) {
+        return token;
+      }
+      // Outdated or legacy token format - immediately clean up
+      localStorage.removeItem('equiflow_auth');
+    }
+  } catch (_) {
+    localStorage.removeItem('equiflow_auth');
+  }
+  return null;
+}
+
 async function fetchJson<T>(endpoint: string, options?: RequestInit): Promise<T> {
   const url = `${API_BASE}${endpoint}`;
+  const token = getAuthToken();
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    ...(options?.headers as Record<string, string>),
+  };
+
   const res = await fetch(url, {
     ...options,
-    headers: {
-      'Content-Type': 'application/json',
-      ...options?.headers,
-    },
+    headers,
   });
 
   if (!res.ok) {
@@ -35,6 +59,15 @@ async function fetchJson<T>(endpoint: string, options?: RequestInit): Promise<T>
       const err = await res.json();
       errorDetail = err.detail || err.message || JSON.stringify(err);
     } catch (_) {}
+
+    // On 401 Unauthorized, purge invalid session to prevent persistent credential errors
+    if (res.status === 401) {
+      if (typeof window !== 'undefined') {
+        localStorage.removeItem('equiflow_auth');
+        window.dispatchEvent(new CustomEvent('equiflow_unauthorized'));
+      }
+    }
+
     throw new Error(errorDetail);
   }
 

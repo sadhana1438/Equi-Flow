@@ -1,7 +1,7 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from typing import List, Optional
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 import uuid
 
 from app.database import get_db
@@ -9,6 +9,7 @@ from app.models.entities import Project, Task, User, TaskDependency, WorkEvent, 
 from app.schemas.dtos import (
     ProjectCreate, ProjectUpdate, ProjectResponse, ProjectIntelligenceSummary
 )
+from app.security import get_current_user, verify_project_access
 from app.intelligence.workload import compute_member_workload
 from app.intelligence.bottleneck import detect_bottlenecks
 from app.intelligence.risk import calculate_project_risks_and_health
@@ -16,15 +17,24 @@ from app.intelligence.risk import calculate_project_risks_and_health
 router = APIRouter(prefix="/api/projects", tags=["projects"])
 
 @router.get("", response_model=List[ProjectResponse])
-def list_projects(user_id: Optional[str] = None, db: Session = Depends(get_db)):
-    query = db.query(Project)
-    if user_id:
-        member_proj_ids = db.query(ProjectMember.project_id).filter(ProjectMember.user_id == user_id).subquery()
-        query = query.filter(Project.id.in_(member_proj_ids))
+def list_projects(
+    user_id: Optional[str] = None,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    target_uid = user_id if (user_id and current_user.is_leader) else current_user.id
+    member_proj_ids = db.query(ProjectMember.project_id).filter(ProjectMember.user_id == target_uid).subquery()
+    query = db.query(Project).filter(Project.id.in_(member_proj_ids))
     return query.order_by(Project.created_at.desc()).all()
 
 @router.post("", response_model=ProjectResponse)
-def create_project(payload: ProjectCreate, db: Session = Depends(get_db)):
+def create_project(
+    payload: ProjectCreate,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    creator_id = current_user.id
+
     project = Project(
         id=str(uuid.uuid4()),
         name=payload.name,
@@ -35,33 +45,47 @@ def create_project(payload: ProjectCreate, db: Session = Depends(get_db)):
     db.add(project)
     db.flush()
 
-    if payload.creator_id:
-        user = db.query(User).filter(User.id == payload.creator_id).first()
-        if user:
-            membership = ProjectMember(
-                id=str(uuid.uuid4()),
-                project_id=project.id,
-                user_id=user.id,
-                role_in_project="LEADER" if user.is_leader else "MEMBER"
-            )
-            db.add(membership)
+    membership = ProjectMember(
+        id=str(uuid.uuid4()),
+        project_id=project.id,
+        user_id=creator_id,
+        role_in_project="LEADER"
+    )
+    db.add(membership)
+
+    # Ensure creator has is_leader set
+    if not current_user.is_leader:
+        current_user.is_leader = True
 
     db.commit()
     db.refresh(project)
     return project
 
 @router.get("/{project_id}", response_model=ProjectResponse)
-def get_project(project_id: str, db: Session = Depends(get_db)):
-    project = db.query(Project).filter(Project.id == project_id).first()
-    if not project:
-        raise HTTPException(status_code=404, detail="Project not found")
+def get_project(
+    project_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    project = verify_project_access(project_id, current_user, db)
     return project
 
 @router.put("/{project_id}", response_model=ProjectResponse)
-def update_project(project_id: str, payload: ProjectUpdate, db: Session = Depends(get_db)):
-    project = db.query(Project).filter(Project.id == project_id).first()
-    if not project:
-        raise HTTPException(status_code=404, detail="Project not found")
+def update_project(
+    project_id: str,
+    payload: ProjectUpdate,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    project = verify_project_access(project_id, current_user, db)
+
+    # Check if user is leader of project or global leader
+    membership = db.query(ProjectMember).filter(
+        ProjectMember.project_id == project_id,
+        ProjectMember.user_id == current_user.id
+    ).first()
+    if not current_user.is_leader and (not membership or membership.role_in_project != "LEADER"):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only project leaders can update project details")
 
     if payload.name is not None:
         project.name = payload.name
@@ -77,19 +101,31 @@ def update_project(project_id: str, payload: ProjectUpdate, db: Session = Depend
     return project
 
 @router.delete("/{project_id}")
-def delete_project(project_id: str, db: Session = Depends(get_db)):
-    project = db.query(Project).filter(Project.id == project_id).first()
-    if not project:
-        raise HTTPException(status_code=404, detail="Project not found")
+def delete_project(
+    project_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    project = verify_project_access(project_id, current_user, db)
+
+    membership = db.query(ProjectMember).filter(
+        ProjectMember.project_id == project_id,
+        ProjectMember.user_id == current_user.id
+    ).first()
+    if not current_user.is_leader and (not membership or membership.role_in_project != "LEADER"):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only project leaders can delete a project")
+
     db.delete(project)
     db.commit()
     return {"message": "Project deleted successfully"}
 
 @router.get("/{project_id}/summary", response_model=ProjectIntelligenceSummary)
-def get_project_summary(project_id: str, db: Session = Depends(get_db)):
-    project = db.query(Project).filter(Project.id == project_id).first()
-    if not project:
-        raise HTTPException(status_code=404, detail="Project not found")
+def get_project_summary(
+    project_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    project = verify_project_access(project_id, current_user, db)
 
     tasks = db.query(Task).filter(Task.project_id == project_id).all()
     task_ids = {t.id for t in tasks}
@@ -98,12 +134,19 @@ def get_project_summary(project_id: str, db: Session = Depends(get_db)):
         TaskDependency.dependent_task_id.in_(task_ids)
     ).all() if task_ids else []
 
-    # Get assignees in this project
+    # Get all project members and task assignees in this project
+    project_member_ids = {
+        m.user_id for m in db.query(ProjectMember).filter(ProjectMember.project_id == project_id).all()
+    }
     assignee_ids = {t.assignee_id for t in tasks if t.assignee_id}
-    members = db.query(User).filter(User.id.in_(assignee_ids)).all() if assignee_ids else []
+    relevant_user_ids = project_member_ids | assignee_ids
+
+    members = db.query(User).filter(User.id.in_(relevant_user_ids)).all() if relevant_user_ids else []
+    window_start = datetime.now(timezone.utc) - timedelta(hours=24)
     events = db.query(WorkEvent).filter(
-        (WorkEvent.project_id == project_id) | (WorkEvent.user_id.in_(assignee_ids))
-    ).all() if assignee_ids else []
+        WorkEvent.event_timestamp >= window_start,
+        ((WorkEvent.project_id == project_id) | (WorkEvent.user_id.in_(relevant_user_ids)))
+    ).all() if relevant_user_ids else []
 
     # Compute member workloads
     member_workloads = {}
