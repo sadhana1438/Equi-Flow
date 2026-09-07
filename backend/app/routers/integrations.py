@@ -1,5 +1,8 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends, HTTPException, status
 from typing import List, Dict
+
+from app.models.entities import User
+from app.security import get_current_user, get_current_leader
 
 router = APIRouter(prefix="/api/integrations", tags=["integrations"])
 
@@ -64,11 +67,14 @@ INTEGRATIONS_STATE = [
 ]
 
 @router.get("", response_model=List[Dict])
-def list_integrations():
+def list_integrations(current_user: User = Depends(get_current_user)):
     return INTEGRATIONS_STATE
 
 @router.post("/{integration_id}/toggle")
-def toggle_integration(integration_id: str):
+def toggle_integration(
+    integration_id: str,
+    current_user: User = Depends(get_current_leader)
+):
     for item in INTEGRATIONS_STATE:
         if item["id"] == integration_id:
             if item["status"] == "Connected":
@@ -76,4 +82,4 @@ def toggle_integration(integration_id: str):
             elif item["status"] == "Not Connected":
                 item["status"] = "Connected"
             return {"id": item["id"], "name": item["name"], "status": item["status"]}
-    return {"error": "Integration not found"}
+    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Integration not found")

@@ -19,14 +19,30 @@ import {
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8000/api';
 
+function getAuthToken(): string | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const saved = localStorage.getItem('equiflow_auth');
+    if (saved) {
+      const parsed = JSON.parse(saved);
+      return parsed.token || null;
+    }
+  } catch (_) {}
+  return null;
+}
+
 async function fetchJson<T>(endpoint: string, options?: RequestInit): Promise<T> {
   const url = `${API_BASE}${endpoint}`;
+  const token = getAuthToken();
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    ...(options?.headers as Record<string, string>),
+  };
+
   const res = await fetch(url, {
     ...options,
-    headers: {
-      'Content-Type': 'application/json',
-      ...options?.headers,
-    },
+    headers,
   });
 
   if (!res.ok) {

@@ -1,11 +1,12 @@
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 from typing import List, Optional
 import uuid
 
 from app.database import get_db
-from app.models.entities import Task, Project, User, Skill
+from app.models.entities import Task, Project, User, Skill, ProjectMember
 from app.schemas.dtos import TaskCreate, TaskUpdate, TaskResponse
+from app.security import get_current_user, verify_project_access
 
 router = APIRouter(prefix="/api/tasks", tags=["tasks"])
 
@@ -34,17 +35,25 @@ def map_task_to_response(task: Task) -> TaskResponse:
 def list_tasks(
     project_id: Optional[str] = None,
     assignee_id: Optional[str] = None,
-    status: Optional[str] = None,
+    status_filter: Optional[str] = Query(None, alias="status"),
     priority: Optional[str] = None,
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     query = db.query(Task)
     if project_id:
+        verify_project_access(project_id, current_user, db)
         query = query.filter(Task.project_id == project_id)
+    else:
+        # Limit to projects the user is a member of, unless leader requesting everything
+        if not current_user.is_leader:
+            user_projects = db.query(ProjectMember.project_id).filter(ProjectMember.user_id == current_user.id).subquery()
+            query = query.filter(Task.project_id.in_(user_projects))
+
     if assignee_id:
         query = query.filter(Task.assignee_id == assignee_id)
-    if status:
-        query = query.filter(Task.status == status)
+    if status_filter:
+        query = query.filter(Task.status == status_filter)
     if priority:
         query = query.filter(Task.priority == priority)
 
@@ -52,10 +61,12 @@ def list_tasks(
     return [map_task_to_response(t) for t in tasks]
 
 @router.post("", response_model=TaskResponse)
-def create_task(payload: TaskCreate, db: Session = Depends(get_db)):
-    project = db.query(Project).filter(Project.id == payload.project_id).first()
-    if not project:
-        raise HTTPException(status_code=404, detail="Project not found")
+def create_task(
+    payload: TaskCreate,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    verify_project_access(payload.project_id, current_user, db)
 
     task_id = payload.id if payload.id and payload.id.strip() else f"TASK-{uuid.uuid4().hex[:6].upper()}"
     
@@ -88,24 +99,38 @@ def create_task(payload: TaskCreate, db: Session = Depends(get_db)):
     return map_task_to_response(task)
 
 @router.get("/{task_id}", response_model=TaskResponse)
-def get_task(task_id: str, db: Session = Depends(get_db)):
+def get_task(
+    task_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
     task = db.query(Task).filter(Task.id == task_id).first()
     if not task:
-        raise HTTPException(status_code=404, detail="Task not found")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task not found")
+    verify_project_access(task.project_id, current_user, db)
     return map_task_to_response(task)
 
 @router.put("/{task_id}", response_model=TaskResponse)
-def update_task(task_id: str, payload: TaskUpdate, db: Session = Depends(get_db)):
+def update_task(
+    task_id: str,
+    payload: TaskUpdate,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
     task = db.query(Task).filter(Task.id == task_id).first()
     if not task:
-        raise HTTPException(status_code=404, detail="Task not found")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task not found")
+
+    verify_project_access(task.project_id, current_user, db)
+
+    if payload.project_id is not None and payload.project_id != task.project_id:
+        verify_project_access(payload.project_id, current_user, db)
+        task.project_id = payload.project_id
 
     if payload.title is not None:
         task.title = payload.title
     if payload.description is not None:
         task.description = payload.description
-    if payload.project_id is not None:
-        task.project_id = payload.project_id
     if payload.assignee_id is not None:
         task.assignee_id = payload.assignee_id if payload.assignee_id != "" else None
     if payload.estimated_hours is not None:
@@ -128,10 +153,16 @@ def update_task(task_id: str, payload: TaskUpdate, db: Session = Depends(get_db)
     return map_task_to_response(task)
 
 @router.delete("/{task_id}")
-def delete_task(task_id: str, db: Session = Depends(get_db)):
+def delete_task(
+    task_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
     task = db.query(Task).filter(Task.id == task_id).first()
     if not task:
-        raise HTTPException(status_code=404, detail="Task not found")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task not found")
+
+    verify_project_access(task.project_id, current_user, db)
     db.delete(task)
     db.commit()
     return {"message": "Task deleted successfully"}

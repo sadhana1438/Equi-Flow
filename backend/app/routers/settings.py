@@ -2,8 +2,9 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.models.entities import SystemSettings
+from app.models.entities import SystemSettings, User
 from app.schemas.dtos import SettingsUpdate, SettingsResponse
+from app.security import get_current_user, get_current_leader
 
 router = APIRouter(prefix="/api/settings", tags=["settings"])
 
@@ -24,7 +25,10 @@ def get_or_create_settings(db: Session) -> SystemSettings:
     return settings
 
 @router.get("", response_model=SettingsResponse)
-def get_settings(db: Session = Depends(get_db)):
+def get_settings(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
     settings = get_or_create_settings(db)
     return SettingsResponse(
         healthy_threshold=settings.healthy_threshold,
@@ -35,7 +39,11 @@ def get_settings(db: Session = Depends(get_db)):
     )
 
 @router.put("", response_model=SettingsResponse)
-def update_settings(payload: SettingsUpdate, db: Session = Depends(get_db)):
+def update_settings(
+    payload: SettingsUpdate,
+    current_user: User = Depends(get_current_leader),
+    db: Session = Depends(get_db)
+):
     settings = get_or_create_settings(db)
     if payload.healthy_threshold is not None:
         settings.healthy_threshold = payload.healthy_threshold

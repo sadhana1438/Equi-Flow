@@ -1,24 +1,31 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from typing import Dict
 
 from app.database import get_db
 from app.models.entities import Task, TaskDependency, User, UserSkill, WorkEvent, ProjectMember
 from app.schemas.dtos import SimulationRequest, SimulationResult
+from app.security import get_current_user, verify_project_access
 from app.intelligence.simulation import run_what_if_simulation
 from app.intelligence.recommendation import get_skill_multiplier
 
 router = APIRouter(prefix="/api/simulation", tags=["simulation"])
 
 @router.post("/simulate", response_model=SimulationResult)
-def simulate_reassignment(payload: SimulationRequest, db: Session = Depends(get_db)):
+def simulate_reassignment(
+    payload: SimulationRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
     task = db.query(Task).filter(Task.id == payload.task_id).first()
     if not task:
-        raise HTTPException(status_code=404, detail="Task not found")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task not found")
+
+    verify_project_access(task.project_id, current_user, db)
 
     target_user = db.query(User).filter(User.id == payload.target_assignee_id).first()
     if not target_user:
-        raise HTTPException(status_code=404, detail="Target user not found")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Target user not found")
 
     # Fetch context
     project_id = task.project_id
@@ -50,33 +57,36 @@ def simulate_reassignment(payload: SimulationRequest, db: Session = Depends(get_
     return SimulationResult(**result)
 
 @router.post("/apply")
-def apply_simulation_change(payload: SimulationRequest, db: Session = Depends(get_db)):
-    """
-    Applies the simulated change permanently to the production database:
-    - Updates task.assignee_id
-    - Calculates and applies the simulated remaining hours (adjusted by skill multiplier & handoff penalty)
-    - Persists to DB
-    """
+def apply_simulation_change(
+    payload: SimulationRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
     task = db.query(Task).filter(Task.id == payload.task_id).first()
     if not task:
-        raise HTTPException(status_code=404, detail="Task not found")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task not found")
+
+    verify_project_access(task.project_id, current_user, db)
 
     target_user = db.query(User).filter(User.id == payload.target_assignee_id).first()
     if not target_user:
-        raise HTTPException(status_code=404, detail="Target user not found")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Target user not found")
 
-    user_skills = db.query(UserSkill).filter(UserSkill.user_id == payload.target_assignee_id).all()
+    # Calculate skill multiplier & handoff penalty
+    skill_multiplier = 1.0
+    if task.required_skill_id:
+        user_skill = db.query(UserSkill).filter(
+            UserSkill.user_id == target_user.id,
+            UserSkill.skill_id == task.required_skill_id
+        ).first()
+        prof = user_skill.proficiency if user_skill else "NONE"
+        skill_multiplier = get_skill_multiplier(prof)
 
-    # Calculate skill multiplier & handoff
-    skill_multiplier, _ = get_skill_multiplier(payload.target_assignee_id, task.required_skill_id, user_skills)
-    orig_est = task.estimated_hours or 4.0
-    orig_rem = task.remaining_hours if task.remaining_hours is not None else orig_est
+    orig_hours = task.remaining_hours if task.remaining_hours is not None else task.estimated_hours or 4.0
+    handoff_penalty = 1.5 if (task.assignee_id and task.assignee_id != target_user.id) else 0.0
+    new_remaining = round((orig_hours * skill_multiplier) + handoff_penalty, 1)
 
-    handoff_penalty = max(0.10 * orig_est, 1.0) if task.status == "IN_PROGRESS" else 0.0
-    new_remaining = round((orig_rem * skill_multiplier) + handoff_penalty, 2)
-
-    # Update real DB record
-    task.assignee_id = payload.target_assignee_id
+    task.assignee_id = target_user.id
     task.remaining_hours = new_remaining
     db.commit()
     db.refresh(task)
@@ -87,5 +97,5 @@ def apply_simulation_change(payload: SimulationRequest, db: Session = Depends(ge
         "task_id": task.id,
         "new_assignee_id": target_user.id,
         "new_assignee_name": target_user.name,
-        "new_remaining_hours": task.remaining_hours
+        "new_remaining_hours": new_remaining
     }
