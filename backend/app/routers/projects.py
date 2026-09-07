@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from typing import List, Optional
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 import uuid
 
 from app.database import get_db
@@ -134,12 +134,19 @@ def get_project_summary(
         TaskDependency.dependent_task_id.in_(task_ids)
     ).all() if task_ids else []
 
-    # Get assignees in this project
+    # Get all project members and task assignees in this project
+    project_member_ids = {
+        m.user_id for m in db.query(ProjectMember).filter(ProjectMember.project_id == project_id).all()
+    }
     assignee_ids = {t.assignee_id for t in tasks if t.assignee_id}
-    members = db.query(User).filter(User.id.in_(assignee_ids)).all() if assignee_ids else []
+    relevant_user_ids = project_member_ids | assignee_ids
+
+    members = db.query(User).filter(User.id.in_(relevant_user_ids)).all() if relevant_user_ids else []
+    window_start = datetime.now(timezone.utc) - timedelta(hours=24)
     events = db.query(WorkEvent).filter(
-        (WorkEvent.project_id == project_id) | (WorkEvent.user_id.in_(assignee_ids))
-    ).all() if assignee_ids else []
+        WorkEvent.event_timestamp >= window_start,
+        ((WorkEvent.project_id == project_id) | (WorkEvent.user_id.in_(relevant_user_ids)))
+    ).all() if relevant_user_ids else []
 
     # Compute member workloads
     member_workloads = {}

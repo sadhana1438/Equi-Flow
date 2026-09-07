@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from typing import Dict
+from datetime import datetime, timezone, timedelta
 
 from app.database import get_db
 from app.models.entities import Task, TaskDependency, User, UserSkill, WorkEvent, ProjectMember
@@ -40,8 +41,10 @@ def simulate_reassignment(
     assignee_ids = {t.assignee_id for t in tasks if t.assignee_id} | project_member_ids | {payload.target_assignee_id}
     members = db.query(User).filter(User.id.in_(assignee_ids)).all()
     user_skills = db.query(UserSkill).filter(UserSkill.user_id.in_(assignee_ids)).all()
+    window_start = datetime.now(timezone.utc) - timedelta(hours=24)
     work_events = db.query(WorkEvent).filter(
-        (WorkEvent.project_id == project_id) | (WorkEvent.user_id.in_(assignee_ids))
+        WorkEvent.event_timestamp >= window_start,
+        ((WorkEvent.project_id == project_id) | (WorkEvent.user_id.in_(assignee_ids)))
     ).all()
 
     result = run_what_if_simulation(

@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 from typing import List, Optional, Dict
+from datetime import datetime, timezone, timedelta
 
 from app.database import get_db
 from app.models.entities import Project, User, Task, TaskDependency, WorkEvent, UserSkill, SystemSettings, ProjectMember
@@ -54,16 +55,19 @@ def get_workload_breakdown(
     }
     
     tasks = db.query(Task).filter(Task.project_id.in_(auth_project_ids)).all()
-    events = db.query(WorkEvent).filter(
-        (WorkEvent.project_id.in_(auth_project_ids)) | 
-        ((WorkEvent.project_id.is_(None)) & (WorkEvent.user_id.in_(project_member_ids)))
-    ).all()
-
-    # Users that are part of these projects
     task_assignee_ids = {t.assignee_id for t in tasks if t.assignee_id}
     relevant_user_ids = project_member_ids | task_assignee_ids
     if not relevant_user_ids:
         return []
+
+    window_start = datetime.now(timezone.utc) - timedelta(hours=24)
+    events = db.query(WorkEvent).filter(
+        WorkEvent.event_timestamp >= window_start,
+        (
+            (WorkEvent.project_id.in_(auth_project_ids)) | 
+            ((WorkEvent.project_id.is_(None)) & (WorkEvent.user_id.in_(relevant_user_ids)))
+        )
+    ).all()
 
     users = db.query(User).filter(User.id.in_(relevant_user_ids)).all()
 
@@ -110,9 +114,13 @@ def get_bottlenecks(
     relevant_user_ids = project_member_ids | assignee_ids
     users = db.query(User).filter(User.id.in_(relevant_user_ids)).all() if relevant_user_ids else []
 
+    window_start = datetime.now(timezone.utc) - timedelta(hours=24)
     events = db.query(WorkEvent).filter(
-        (WorkEvent.project_id.in_(auth_project_ids)) | 
-        ((WorkEvent.project_id.is_(None)) & (WorkEvent.user_id.in_(relevant_user_ids)))
+        WorkEvent.event_timestamp >= window_start,
+        (
+            (WorkEvent.project_id.in_(auth_project_ids)) | 
+            ((WorkEvent.project_id.is_(None)) & (WorkEvent.user_id.in_(relevant_user_ids)))
+        )
     ).all() if relevant_user_ids else []
 
     member_workloads = {}
@@ -166,9 +174,13 @@ def get_risks(
     relevant_user_ids = project_member_ids | assignee_ids
     users = db.query(User).filter(User.id.in_(relevant_user_ids)).all() if relevant_user_ids else []
 
+    window_start = datetime.now(timezone.utc) - timedelta(hours=24)
     events = db.query(WorkEvent).filter(
-        (WorkEvent.project_id.in_(auth_project_ids)) | 
-        ((WorkEvent.project_id.is_(None)) & (WorkEvent.user_id.in_(relevant_user_ids)))
+        WorkEvent.event_timestamp >= window_start,
+        (
+            (WorkEvent.project_id.in_(auth_project_ids)) | 
+            ((WorkEvent.project_id.is_(None)) & (WorkEvent.user_id.in_(relevant_user_ids)))
+        )
     ).all() if relevant_user_ids else []
 
     member_workloads = {}
@@ -211,9 +223,13 @@ def get_recommendations(
     target_users = db.query(User).filter(User.id.in_(relevant_user_ids)).all() if relevant_user_ids else []
     user_skills = db.query(UserSkill).filter(UserSkill.user_id.in_(relevant_user_ids)).all() if relevant_user_ids else []
 
+    window_start = datetime.now(timezone.utc) - timedelta(hours=24)
     events = db.query(WorkEvent).filter(
-        (WorkEvent.project_id.in_(auth_project_ids)) | 
-        ((WorkEvent.project_id.is_(None)) & (WorkEvent.user_id.in_(relevant_user_ids)))
+        WorkEvent.event_timestamp >= window_start,
+        (
+            (WorkEvent.project_id.in_(auth_project_ids)) | 
+            ((WorkEvent.project_id.is_(None)) & (WorkEvent.user_id.in_(relevant_user_ids)))
+        )
     ).all() if relevant_user_ids else []
 
     member_workloads = {}
